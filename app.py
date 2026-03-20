@@ -1908,11 +1908,11 @@ def emergency_response():
     return render_template('emergency_response.html')
 
 
+# Always initialise database (needed for both local and production)
+print('📦 Initialising database...')
+init_db()
+
 if __name__ == '__main__':
-    print('📦 Initialising database...')
-    init_db()
     print('🚀 ScratchXI — http://localhost:5000')
-    # debug=True only in development (set DEBUG=false in production .env)
-    debug_mode = os.environ.get('DEBUG', 'true').lower() == 'true'
-    socketio.run(app, debug=debug_mode, host='0.0.0.0', port=5000)
+    socketio.run(app, debug=True, host='0.0.0.0', port=5000)
 
