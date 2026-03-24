@@ -29,6 +29,10 @@
             <div class="detail-value">{{ active.clock_in[:16] }}</div>
           </div>
           <div class="detail-item">
+            <div class="detail-label">Campus</div>
+            <div class="detail-value">{{ active.campus or 'Unknown' }}</div>
+          </div>
+          <div class="detail-item">
             <div class="detail-label">Availability</div>
             <div class="detail-value">{{ active.availability | capitalize }}</div>
           </div>
@@ -60,6 +64,12 @@
         <form method="POST" style="display:flex;gap:.75rem;align-items:center;flex-wrap:wrap;">
         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="action" value="clock_in">
+          <select name="campus" class="inline-select" required>
+            <option value="" disabled selected>Select DUT campus</option>
+            {% for c, label in campuses %}
+              {% if c %}<option value="{{ c }}">{{ label }}</option>{% endif %}
+            {% endfor %}
+          </select>
           <select name="availability" class="inline-select">
             <option value="available">Available</option>
             <option value="unavailable">Unavailable</option>
@@ -76,11 +86,12 @@
     {% if history %}
     <div class="tbl-wrap">
       <table>
-        <thead><tr><th>Date</th><th>Clock In</th><th>Clock Out</th><th>Status</th></tr></thead>
+        <thead><tr><th>Date</th><th>Campus</th><th>Clock In</th><th>Clock Out</th><th>Status</th></tr></thead>
         <tbody>
           {% for rec in history %}
           <tr>
             <td class="td-muted">{{ rec.date_str }}</td>
+            <td class="td-muted">{{ rec.campus or '—' }}</td>
             <td>{{ rec.clock_in[:16] }}</td>
             <td class="td-muted">{{ rec.clock_out[:16] if rec.clock_out else '—' }}</td>
             <td>

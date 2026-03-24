@@ -41,13 +41,14 @@
     <div class="tbl-wrap">
       <table>
         <thead>
-          <tr><th>Officer</th><th>Email</th><th>Clock In</th><th>Availability</th></tr>
+          <tr><th>Officer</th><th>Email</th><th>Campus</th><th>Clock In</th><th>Availability</th></tr>
         </thead>
         <tbody>
           {% for rec in on_campus %}
           <tr id="att-row-{{ rec.security_id }}">
             <td class="td-title">{{ rec.security_name }}</td>
             <td class="td-muted">{{ rec.email }}</td>
+            <td class="td-muted">{{ rec.campus or '—' }}</td>
             <td class="td-muted">{{ rec.clock_in[:16] }}</td>
             <td>
               <span class="task-badge {% if rec.availability=='available' %}task-submitted{% else %}task-in_progress{% endif %}">

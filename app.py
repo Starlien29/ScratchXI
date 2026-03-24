@@ -387,9 +387,13 @@ def init_db():
             clock_in     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             clock_out    DATETIME,
             availability TEXT NOT NULL DEFAULT 'available',
+            campus       TEXT,
             date_str     TEXT NOT NULL,
             is_active    INTEGER NOT NULL DEFAULT 1
         )''')
+        acols = [r[1] for r in c.execute("PRAGMA table_info(attendance)").fetchall()]
+        if 'campus' not in acols:
+            c.execute("ALTER TABLE attendance ADD COLUMN campus TEXT")
         # ── password_resets table (new) ─────────────────────
         c.execute('''CREATE TABLE IF NOT EXISTS password_resets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -713,7 +717,8 @@ def admin_dashboard():
             """SELECT u.id, u.name,
                CASE WHEN a.is_active=1 AND a.date_str=? AND a.availability='available'
                     THEN 1 ELSE 0 END as is_available,
-               a.clock_in
+               a.clock_in,
+               a.campus as current_campus
                FROM users u
                LEFT JOIN attendance a ON a.security_id=u.id AND a.is_active=1 AND a.date_str=?
                WHERE u.role='security'
@@ -1193,11 +1198,32 @@ def analytics():
         total_resolved = c.execute("SELECT COUNT(*) FROM alerts WHERE status IN ('resolved','closed')").fetchone()[0]
         total_active   = c.execute("SELECT COUNT(*) FROM alerts WHERE status NOT IN ('resolved','closed','false_alarm')").fetchone()[0]
         total_users    = c.execute('SELECT COUNT(*) FROM users').fetchone()[0]
+
+        security_performance = c.execute(
+            """SELECT u.name as officer_name,
+                         COUNT(DISTINCT a.id) as resolved_count,
+                         AVG((julianday(au.timestamp) - julianday(a.created_at))*24*60) as avg_turnaround_mins
+                  FROM alerts a
+                  JOIN assignments asg ON asg.alert_id = a.id
+                  JOIN users u ON asg.security_id = u.id
+                  JOIN alert_updates au ON au.alert_id = a.id AND au.status IN ('resolved','closed')
+                  WHERE a.status IN ('resolved','closed')
+                  GROUP BY u.id
+                  ORDER BY resolved_count DESC
+                  LIMIT 10"""
+        ).fetchall()
+
+        busiest_hours = c.execute(
+            "SELECT strftime('%Y-%m-%d %H:00', created_at) as hour, COUNT(*) as count "
+            "FROM alerts GROUP BY hour ORDER BY count DESC LIMIT 10"
+        ).fetchall()
     return render_template('analytics.html',
         by_campus=by_campus, by_type=by_type, by_severity=by_severity,
         by_priority=by_priority, by_status=by_status, hotspots=hotspots, monthly=monthly,
         total_alerts=total_alerts, total_resolved=total_resolved,
-        total_active=total_active, total_users=total_users)
+        total_active=total_active, total_users=total_users,
+        security_performance=security_performance, busiest_hours=busiest_hours,
+        campus_list=[campus_item[0] for campus_item in DUT_CAMPUSES if campus_item[0]])
 
 
 @app.route('/chat')
@@ -1645,12 +1671,17 @@ def security_attendance():
             ).fetchone()
 
             if action == 'clock_in' and not active:
+                campus = request.form.get('campus', '').strip()
+                valid_campuses = [c[0] for c in DUT_CAMPUSES if c[0]]
+                if not campus or campus not in valid_campuses:
+                    flash('Select a valid DUT campus before clocking in.', 'error')
+                    return redirect(url_for('security_attendance'))
                 avail = request.form.get('availability', 'available')
                 c.execute(
-                    "INSERT INTO attendance (security_id, date_str, availability) VALUES (?,?,?)",
-                    (uid, today, avail)
+                    "INSERT INTO attendance (security_id, date_str, availability, campus) VALUES (?,?,?,?)",
+                    (uid, today, avail, campus)
                 )
-                flash('Clocked in successfully.', 'success')
+                flash('Clocked in successfully at ' + campus + '.', 'success')
 
             elif action == 'clock_out' and active:
                 c.execute(
@@ -1679,7 +1710,7 @@ def security_attendance():
             (uid,)
         ).fetchall()
 
-    return render_template('security_attendance.html', active=active, history=history, today=today)
+    return render_template('security_attendance.html', active=active, history=history, today=today, campuses=DUT_CAMPUSES)
 
 
 @app.route('/admin/attendance')
@@ -1853,29 +1884,98 @@ def past_alerts():
     if require_login(): return redirect(url_for('login'))
     if require_role('admin', 'security', 'staff'):
         flash('Access restricted.', 'error'); return redirect(url_for('index'))
-    search   = request.args.get('q', '').strip()
-    campus_f = request.args.get('campus', '').strip()
-    page     = max(1, int(request.args.get('page', 1)))
-    per_page = 20
+
+    search         = request.args.get('q', '').strip()
+    campus_f       = request.args.get('campus', '').strip()
+    incident_f     = request.args.get('incident_type', '').strip()
+    severity_f     = request.args.get('severity', '').strip()
+    officer_f      = request.args.get('officer', '').strip()
+    date_from      = request.args.get('date_from', '').strip()
+    date_to        = request.args.get('date_to', '').strip()
+    page           = max(1, int(request.args.get('page', 1)))
+    per_page       = 20
+
     with get_db() as c:
-        conds  = ["a.status IN ('resolved','closed','false_alarm')"]; params = []
+        conds  = ["a.status IN ('resolved','closed','false_alarm')"]
+        params = []
         if search:
             conds.append("(a.incident_type LIKE ? OR a.description LIKE ?)")
             params += [f'%{search}%'] * 2
         if campus_f:
             conds.append("a.campus=?"); params.append(campus_f)
+        if incident_f:
+            conds.append("a.incident_type=?"); params.append(incident_f)
+        if severity_f:
+            conds.append("a.severity=?"); params.append(severity_f)
+        if date_from:
+            conds.append("DATE(a.created_at)>=DATE(?)"); params.append(date_from)
+        if date_to:
+            conds.append("DATE(a.created_at)<=DATE(?)"); params.append(date_to)
+
+        join_assignment = ''
+        officer_filter = ''
+        if officer_f:
+            join_assignment = 'LEFT JOIN assignments asg ON asg.alert_id=a.id AND asg.is_active=1'
+            officer_filter = 'AND asg.security_id=?'
+            params.append(officer_f)
+
         where  = ' AND '.join(conds)
-        total  = c.execute(f'SELECT COUNT(*) FROM alerts a WHERE {where}', params).fetchone()[0]
+        total = c.execute(
+            f"SELECT COUNT(DISTINCT a.id) FROM alerts a {join_assignment} WHERE {where} {officer_filter}",
+            params
+        ).fetchone()[0]
+
         alerts = c.execute(
-            f"""SELECT a.*, u.name as reporter_name FROM alerts a
-                JOIN users u ON a.reported_by=u.id
-                WHERE {where} ORDER BY a.created_at DESC LIMIT ? OFFSET ?""",
+            f"""SELECT a.*, u.name as reporter_name,
+                    sec.name as assigned_to,
+                    asg.assigned_at, asg.accepted_at, asg.submitted_at,
+                    (SELECT timestamp FROM alert_updates au
+                     WHERE au.alert_id=a.id AND au.status IN ('resolved','closed')
+                     ORDER BY au.timestamp DESC LIMIT 1) as resolved_at
+               FROM alerts a
+               JOIN users u ON a.reported_by=u.id
+               LEFT JOIN assignments asg ON asg.alert_id=a.id AND asg.is_active=1
+               LEFT JOIN users sec ON asg.security_id=sec.id
+               WHERE {where} {officer_filter}
+               ORDER BY a.created_at DESC LIMIT ? OFFSET ?""",
             params + [per_page, (page - 1) * per_page]
         ).fetchall()
+
+        processed_alerts = []
+        for a in alerts:
+            a = dict(a)
+            try:
+                created   = datetime.fromisoformat(a['created_at'])
+            except Exception:
+                created = None
+            resolved = None
+            duration_minutes = None
+            if a.get('resolved_at'):
+                try:
+                    resolved = datetime.fromisoformat(a['resolved_at'])
+                except Exception:
+                    resolved = None
+            if created and resolved:
+                duration_minutes = int((resolved - created).total_seconds() // 60)
+            a['resolved_at'] = (a['resolved_at'] or 'Unknown')
+            a['turnaround_minutes'] = duration_minutes if duration_minutes is not None else 'N/A'
+            a['assigned_to']     = a.get('assigned_to') or 'Unassigned'
+            processed_alerts.append(a)
+
+        officer_options = c.execute(
+            "SELECT id, name FROM users WHERE role='security' ORDER BY name"
+        ).fetchall()
+
     return render_template('past_alerts.html',
-        alerts=alerts, search=search, campus_f=campus_f,
+        alerts=processed_alerts,
+        search=search, campus_f=campus_f, incident_f=incident_f,
+        severity_f=severity_f, officer_f=officer_f,
+        date_from=date_from, date_to=date_to,
         page=page, total_pages=max(1, (total + per_page - 1) // per_page),
-        campuses=[campus_item[0] for campus_item in DUT_CAMPUSES if campus_item[0]])
+        campuses=[campus_item[0] for campus_item in DUT_CAMPUSES if campus_item[0]],
+        incident_types=[i[0] for i in INCIDENT_TYPES if i[0]],
+        security_officers=officer_options)
+
 
 
 # Admin attendance API endpoint (for real-time updates)
@@ -1887,7 +1987,7 @@ def api_attendance():
     today = date.today().isoformat()
     with get_db() as c:
         rows = c.execute(
-            """SELECT a.security_id, u.name, a.availability, a.clock_in
+            """SELECT a.security_id, u.name, a.availability, a.campus, a.clock_in
                FROM attendance a JOIN users u ON a.security_id=u.id
                WHERE a.is_active=1 AND a.date_str=?
                ORDER BY a.clock_in DESC""",

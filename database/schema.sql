@@ -121,6 +121,7 @@ CREATE TABLE IF NOT EXISTS attendance (
     clock_in      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     clock_out     DATETIME,
     availability  TEXT NOT NULL DEFAULT 'available',
+    campus        TEXT,
     -- 'available' | 'unavailable'
     date_str      TEXT NOT NULL,  -- YYYY-MM-DD for easy daily queries
     is_active     INTEGER NOT NULL DEFAULT 1  -- 1 = currently clocked in

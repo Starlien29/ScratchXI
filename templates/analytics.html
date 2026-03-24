@@ -171,5 +171,82 @@
   </div>
   {% endif %}
 
+  <!-- Security Performance Metrics -->
+  <div class="card" style="margin-top:1.25rem;">
+    <div class="card-header"><h2>Security Performance</h2></div>
+    <div class="card-body">
+      {% if security_performance %}
+      <table style="width:100%;font-size:0.84rem;">
+        <thead><tr><th>Officer</th><th>Resolved Incidents</th><th>Avg turnaround (mins)</th></tr></thead>
+        <tbody>
+          {% for row in security_performance %}
+          <tr>
+            <td class="td-title">{{ row.officer_name }}</td>
+            <td class="td-muted">{{ row.resolved_count }}</td>
+            <td class="td-muted">{{ row.avg_turnaround_mins | round(1) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p style="color:var(--text-3);font-size:0.82rem;">No performance data yet.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1rem;">
+    <div class="card-header"><h2>Busiest Reporting Periods</h2></div>
+    <div class="card-body">
+      {% if busiest_hours %}
+      <ul style="list-style:none;padding-left:0;margin:0;font-size:0.85rem;">
+        {% for row in busiest_hours %}
+        <li>{{ row.hour }} — <strong>{{ row.count }} alerts</strong></li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p style="color:var(--text-3);font-size:0.82rem;">Not enough data to calculate peak periods yet.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1rem;">
+    <div class="card-header"><h2>Campus Maps</h2></div>
+    <div class="card-body">
+      <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.75rem;flex-wrap:wrap;">
+        <label for="campus-map-select" style="font-size:0.9rem;font-weight:600;">Select campus</label>
+        <select id="campus-map-select" class="inline-select"></select>
+      </div>
+      <div style="width:100%;overflow:hidden;border-radius:8px;">
+        <img id="campus-map-img" src="" alt="Campus map" style="width:100%;max-height:340px;object-fit:cover;border:1px solid var(--border);"></div>
+      <p style="margin-top:0.5rem;color:var(--text-3);font-size:0.82rem;">Maps show essential campus zones: library, sports centre, lecture blocks and student residences where applicable.</p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const defaultMapUrl = "{{ url_for('static', filename='dut-header.jpg') }}";
+  const campusMapPaths = {
+    {% for c in campus_list %}
+      "{{ c }}": defaultMapUrl,
+    {% endfor %}
+  };
+  const mapSelect = document.getElementById('campus-map-select');
+  const mapImg = document.getElementById('campus-map-img');
+  if (mapSelect && mapImg) {
+    Object.keys(campusMapPaths).forEach(c => {
+      const opt = document.createElement('option'); opt.value = c; opt.textContent = c; mapSelect.append(opt);
+    });
+    mapSelect.addEventListener('change', () => {
+      const selected = mapSelect.value;
+      mapImg.src = campusMapPaths[selected] || '';
+      mapImg.alt = `${selected} map`;
+    });
+    if (Object.keys(campusMapPaths).length) {
+      mapSelect.value = Object.keys(campusMapPaths)[0];
+      mapSelect.dispatchEvent(new Event('change'));
+    }
+  }
+</script>
 
 {% endblock %}
